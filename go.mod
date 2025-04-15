@@ -1,4 +1,4 @@
-module github.comspirandev/go-gormrepo
+module github.com/spirandev/go-gormrepo
 
 go 1.23.0
 
