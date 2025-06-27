@@ -344,14 +344,7 @@ func (r *GenericRepository[T]) One() (*T, error) {
 	return r.singleResult()
 }
 
-// ==================== PROJECTION METHODS ====================
-
-// ProjectToDTO configures the repository to return only the DTO
-// RETURNS: The specified DTO, not the complete entity
-// Usage: repo.ProjectToDTO(UserBasicInfo{}).FindOne(filters).Project()
-// AUTOMATICALLY DETECTS STRUCTS: If the DTO has struct fields, preloads will be applied automatically
 func (r *GenericRepository[T]) ProjectToDTO(dtoInterface interface{}) *GenericRepository[T] {
-	// Create a new repository instance to not affect the original
 	newRepo := &GenericRepository[T]{
 		db:             r.db,
 		projection:     dtoInterface,
@@ -360,20 +353,13 @@ func (r *GenericRepository[T]) ProjectToDTO(dtoInterface interface{}) *GenericRe
 		currentSlice:   r.currentSlice,
 		lastError:      r.lastError,
 	}
-
-	// Check if the DTO has struct fields and apply preloads automatically
 	if hasStructFields(dtoInterface) {
-		// Apply preloads for nested structs
 		preloads := extractPreloadsFromDTO(dtoInterface)
 
 		for _, preload := range preloads {
 			newRepo.db = newRepo.db.Preload(preload)
 		}
-
-		// When there are preloads, let GORM manage field selection automatically
-		// Using Select() would break the preloads functionality
 	} else {
-		// Standard projection without preloads
 		fields := createProjectionFromDTO(dtoInterface)
 		if len(fields) > 0 {
 			selectFields := strings.Join(fields, ", ")
@@ -384,13 +370,11 @@ func (r *GenericRepository[T]) ProjectToDTO(dtoInterface interface{}) *GenericRe
 	return newRepo
 }
 
-// Project converts current result to real DTO using configured projection
 func (r *GenericRepository[T]) Project() (interface{}, error) {
 	if r.projection == nil {
 		return nil, fmt.Errorf("no projection configured - use ProjectToDTO() first")
 	}
 
-	// Use the stored current result instead of making a new query
 	if r.currentResult == nil {
 		return nil, fmt.Errorf("no current result available - execute a query first (FindOne, FindByID, etc.)")
 	}
@@ -398,133 +382,26 @@ func (r *GenericRepository[T]) Project() (interface{}, error) {
 	return mapEntityToDTO(r.currentResult, r.projection)
 }
 
-// ==================== HELPER FUNCTIONS ====================
-
-// hasStructFields checks if the DTO has any struct fields (for auto-preload)
-func hasStructFields(dtoInterface interface{}) bool {
-	dtoType := reflect.TypeOf(dtoInterface)
-	if dtoType.Kind() == reflect.Ptr {
-		dtoType = dtoType.Elem()
-	}
-
-	for i := 0; i < dtoType.NumField(); i++ {
-		field := dtoType.Field(i)
-
-		fieldType := field.Type
-		if fieldType.Kind() == reflect.Ptr {
-			fieldType = fieldType.Elem()
-		}
-
-		// If it's a struct and not a basic type, it should be preloaded
-		if fieldType.Kind() == reflect.Struct && !isBasicType(fieldType) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// extractPreloadsFromDTO extracts preload associations for nested structs
-func extractPreloadsFromDTO(dtoInterface interface{}) []string {
-	var preloads []string
-
-	dtoType := reflect.TypeOf(dtoInterface)
-	if dtoType.Kind() == reflect.Ptr {
-		dtoType = dtoType.Elem()
-	}
-
-	for i := 0; i < dtoType.NumField(); i++ {
-		field := dtoType.Field(i)
-
-		fieldType := field.Type
-		if fieldType.Kind() == reflect.Ptr {
-			fieldType = fieldType.Elem()
-		}
-
-		// If it's a struct and not a basic type, add it to preloads
-		if fieldType.Kind() == reflect.Struct && !isBasicType(fieldType) {
-			// Use the field name as the association name (can be customized with preload tag)
-			preloadName := field.Tag.Get("preload")
-			if preloadName == "" {
-				preloadName = field.Name
-			}
-			preloads = append(preloads, preloadName)
-		}
-	}
-
-	return preloads
-}
-
-// extractMainTableFields extracts only fields that belong to the main table (no struct fields)
-func extractMainTableFields(dtoInterface interface{}) []string {
-	var fields []string
-
-	dtoType := reflect.TypeOf(dtoInterface)
-	if dtoType.Kind() == reflect.Ptr {
-		dtoType = dtoType.Elem()
-	}
-
-	for i := 0; i < dtoType.NumField(); i++ {
-		field := dtoType.Field(i)
-
-		fieldType := field.Type
-		if fieldType.Kind() == reflect.Ptr {
-			fieldType = fieldType.Elem()
-		}
-
-		// Only include basic type fields (not structs)
-		if isBasicType(fieldType) {
-			columnName := getColumnName(field)
-			fields = append(fields, columnName)
-		}
-	}
-
-	return fields
-}
-
-// isBasicType checks if a type is a basic type (not a struct)
-func isBasicType(t reflect.Type) bool {
-	switch t.Kind() {
-	case reflect.String, reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
-		reflect.Float32, reflect.Float64, reflect.Bool:
-		return true
-	}
-	return false
-}
-
-// ==================== HELPER METHODS ====================
-
-// HasError checks if there is any stored error
 func (r *GenericRepository[T]) HasError() bool {
 	return r.lastError != nil
 }
 
-// Error returns the last error that occurred
 func (r *GenericRepository[T]) Error() error {
 	return r.lastError
 }
 
-// Result returns the current result and last error
 func (r *GenericRepository[T]) Result() (*T, error) {
 	return r.currentResult, r.lastError
 }
 
-// Results returns the current slice result and last error
 func (r *GenericRepository[T]) Results() (*[]T, error) {
 	return r.currentSlice, r.lastError
 }
 
-// Execute finalizes the operation and returns only the error (if any)
-// Useful when you only care about success/failure, not the result
 func (r *GenericRepository[T]) Execute() error {
 	return r.lastError
 }
 
-// ==================== PROJECTION COMPATIBILITY METHODS ====================
-
-// ProjectEntity converts an entity to real DTO (static method)
-// Usage: dto, err := repo.ProjectEntity(user, UserBasicInfo{})
 func (r *GenericRepository[T]) ProjectEntity(entity *T, dtoInterface interface{}) (interface{}, error) {
 	if entity == nil {
 		return nil, fmt.Errorf("entity cannot be nil")
@@ -533,15 +410,12 @@ func (r *GenericRepository[T]) ProjectEntity(entity *T, dtoInterface interface{}
 	return mapEntityToDTO(entity, dtoInterface)
 }
 
-// ProjectEntitySlice converts a list of entities to slice of DTOs (static method)
-// Usage: dtos, err := repo.ProjectEntitySlice(users, UserBasicInfo{})
 func (r *GenericRepository[T]) ProjectEntitySlice(entities *[]T, dtoInterface interface{}) (interface{}, error) {
 	if entities == nil {
 		return nil, fmt.Errorf("entity slice cannot be nil")
 	}
 
 	if len(*entities) == 0 {
-		// Return empty slice of DTO type
 		dtoType := reflect.TypeOf(dtoInterface)
 		if dtoType.Kind() == reflect.Ptr {
 			dtoType = dtoType.Elem()
@@ -550,24 +424,20 @@ func (r *GenericRepository[T]) ProjectEntitySlice(entities *[]T, dtoInterface in
 		return reflect.MakeSlice(sliceType, 0, 0).Interface(), nil
 	}
 
-	// Get DTO type
 	dtoType := reflect.TypeOf(dtoInterface)
 	if dtoType.Kind() == reflect.Ptr {
 		dtoType = dtoType.Elem()
 	}
 
-	// Create DTO slice
 	sliceType := reflect.SliceOf(dtoType)
 	resultSlice := reflect.MakeSlice(sliceType, 0, len(*entities))
 
-	// Convert each entity
 	for _, entity := range *entities {
 		dto, err := mapEntityToDTO(&entity, dtoInterface)
 		if err != nil {
 			return nil, fmt.Errorf("error converting entity: %w", err)
 		}
 
-		// Add to slice
 		dtoValue := reflect.ValueOf(dto)
 		if dtoValue.Kind() == reflect.Ptr {
 			dtoValue = dtoValue.Elem()
@@ -578,8 +448,6 @@ func (r *GenericRepository[T]) ProjectEntitySlice(entities *[]T, dtoInterface in
 	return resultSlice.Interface(), nil
 }
 
-// ProjectSlice converts current result (currentSlice) to slice of DTOs using configured projection
-// Usage: dtos, err := repo.ProjectToDTO(UserBasicInfo{}).FindAll().ProjectSlice()
 func (r *GenericRepository[T]) ProjectSlice() (interface{}, error) {
 	if r.lastError != nil {
 		return nil, r.lastError
@@ -594,7 +462,6 @@ func (r *GenericRepository[T]) ProjectSlice() (interface{}, error) {
 	}
 
 	if len(*r.currentSlice) == 0 {
-		// Return empty slice of DTO type
 		dtoType := reflect.TypeOf(r.projection)
 		if dtoType.Kind() == reflect.Ptr {
 			dtoType = dtoType.Elem()
@@ -603,24 +470,20 @@ func (r *GenericRepository[T]) ProjectSlice() (interface{}, error) {
 		return reflect.MakeSlice(sliceType, 0, 0).Interface(), nil
 	}
 
-	// Get DTO type
 	dtoType := reflect.TypeOf(r.projection)
 	if dtoType.Kind() == reflect.Ptr {
 		dtoType = dtoType.Elem()
 	}
 
-	// Create DTO slice
 	sliceType := reflect.SliceOf(dtoType)
 	resultSlice := reflect.MakeSlice(sliceType, 0, len(*r.currentSlice))
 
-	// Convert each entity
 	for _, entity := range *r.currentSlice {
 		dto, err := mapEntityToDTO(&entity, r.projection)
 		if err != nil {
 			return nil, fmt.Errorf("error converting entity: %w", err)
 		}
 
-		// Add to slice
 		dtoValue := reflect.ValueOf(dto)
 		if dtoValue.Kind() == reflect.Ptr {
 			dtoValue = dtoValue.Elem()
