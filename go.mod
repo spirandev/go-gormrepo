@@ -4,7 +4,7 @@ go 1.23.0
 
 toolchain go1.24.0
 
-require gorm.io/gorm v1.25.12
+require gorm.io/gorm v1.30.0
 
 require (
 	github.com/jinzhu/inflection v1.0.0 // indirect
