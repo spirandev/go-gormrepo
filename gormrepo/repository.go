@@ -2,6 +2,7 @@ package gormrepo
 
 import (
 	"context"
+	"reflect"
 
 	"gorm.io/gorm"
 )
@@ -16,9 +17,10 @@ type BaseRepository[T any] interface {
 	CreateWithPreload(entity *T, associations ...string) *GenericRepository[T]
 	CreateWithAllAssociations(entity *T) *GenericRepository[T]
 	CreateBatch(entities *[]T) *GenericRepository[T]
+	CreateBatchIgnoreZeroValues(entities *[]T) *GenericRepository[T]
 
-	Update(entity *T) *GenericRepository[T]
-	UpdateWithPreload(entity *T, fields ...string) *GenericRepository[T]
+	Save(entity *T) *GenericRepository[T]
+	SaveWithPreload(entity *T, associations ...string) *GenericRepository[T]
 	UpdateFields(entity *T, fields map[string]interface{}) *GenericRepository[T]
 
 	Delete(id int64) *GenericRepository[T]
@@ -53,9 +55,11 @@ type BaseRepository[T any] interface {
 	Not(query interface{}, args ...interface{}) *GenericRepository[T]
 
 	// Finalizer methods - execute the query and return the result
-	First() (*T, error) // Returns first entity found
-	Get() (*[]T, error) // Returns slice of entities
-	One() (*T, error)   // Returns one entity or error if not exactly one found
+	First() (*T, error)                           // Returns first entity found
+	GetAll() (*[]T, error)                        // Returns slice of entities
+	GetAllAs(t reflect.Type) (interface{}, error) // Returns slice of entities as interface{} for dynamic types
+	Get() (*T, error)                             // Returns one entity or error if not exactly one found
+	GetAs(t reflect.Type) (interface{}, error)    // Returns one entity as interface{} for dynamic types
 	// FindFirst() (*T, error) // Alias for First() for compatibility
 
 	// Projection methods - return repository configured to use projection

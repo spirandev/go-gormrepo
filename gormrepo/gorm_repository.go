@@ -29,11 +29,30 @@ func (r *GenericRepository[T]) singleResult() (*T, error) {
 	return &entity, err
 }
 
+func (r *GenericRepository[T]) singleResultAs(targetType reflect.Type) (interface{}, error) {
+	entityPtr := reflect.New(targetType).Interface()
+	err := r.db.First(&entityPtr).Error
+	return reflect.ValueOf(entityPtr).Elem().Interface(), err
+}
+
 func (r *GenericRepository[T]) listResult() (*[]T, error) {
 	var entities []T
 	err := r.db.Find(&entities).Error
 	return &entities, err
 }
+
+func (r *GenericRepository[T]) listResultAs(targetType reflect.Type) (interface{}, error) {
+	sliceType := reflect.SliceOf(targetType)
+	slicePtr := reflect.New(sliceType).Interface()
+
+	err := r.db.Model(new(T)).Find(slicePtr).Error
+	if err != nil {
+		return nil, err
+	}
+
+	return reflect.ValueOf(slicePtr).Elem().Interface(), nil
+}
+
 func (r *GenericRepository[T]) Create(entity *T) *GenericRepository[T] {
 	err := r.db.Create(entity).Error
 	if err != nil {
@@ -98,6 +117,17 @@ func (r *GenericRepository[T]) CreateWithAllAssociations(entity *T) *GenericRepo
 }
 
 func (r *GenericRepository[T]) CreateBatch(entities *[]T) *GenericRepository[T] {
+	err := r.db.Select("*").Create(entities).Error
+	if err != nil {
+		r.lastError = err
+		return r
+	}
+
+	r.currentSlice = entities
+	return r
+}
+
+func (r *GenericRepository[T]) CreateBatchIgnoreZeroValues(entities *[]T) *GenericRepository[T] {
 	err := r.db.Create(entities).Error
 	if err != nil {
 		r.lastError = err
@@ -108,7 +138,7 @@ func (r *GenericRepository[T]) CreateBatch(entities *[]T) *GenericRepository[T] 
 	return r
 }
 
-func (r *GenericRepository[T]) Update(entity *T) *GenericRepository[T] {
+func (r *GenericRepository[T]) Save(entity *T) *GenericRepository[T] {
 	err := r.db.Save(entity).Error
 	if err != nil {
 		r.lastError = err
@@ -119,7 +149,7 @@ func (r *GenericRepository[T]) Update(entity *T) *GenericRepository[T] {
 	return r
 }
 
-func (r *GenericRepository[T]) UpdateWithPreload(entity *T, associations ...string) *GenericRepository[T] {
+func (r *GenericRepository[T]) SaveWithPreload(entity *T, associations ...string) *GenericRepository[T] {
 	err := r.db.Save(entity).Error
 	if err != nil {
 		r.lastError = err
@@ -335,13 +365,22 @@ func (r *GenericRepository[T]) First() (*T, error) {
 	return r.singleResult()
 }
 
-func (r *GenericRepository[T]) Get() (*[]T, error) {
+func (r *GenericRepository[T]) GetAll() (*[]T, error) {
 	return r.listResult()
 }
 
-func (r *GenericRepository[T]) One() (*T, error) {
+func (r *GenericRepository[T]) GetAllAs(targetType reflect.Type) (interface{}, error) {
+	return r.listResultAs(targetType)
+}
+
+func (r *GenericRepository[T]) Get() (*T, error) {
 	r.db = r.db.Limit(1)
 	return r.singleResult()
+}
+
+func (r *GenericRepository[T]) GetAs(t reflect.Type) (interface{}, error) {
+	r.db = r.db.Limit(1)
+	return r.singleResultAs(t)
 }
 
 func (r *GenericRepository[T]) ProjectToDTO(dtoInterface interface{}) *GenericRepository[T] {

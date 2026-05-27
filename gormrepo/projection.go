@@ -20,8 +20,20 @@ func hasStructFields(dtoInterface interface{}) bool {
 			fieldType = fieldType.Elem()
 		}
 
+		// Check for struct fields
 		if fieldType.Kind() == reflect.Struct && !isBasicType(fieldType) {
 			return true
+		}
+
+		// Check for slice fields containing structs
+		if fieldType.Kind() == reflect.Slice {
+			elemType := fieldType.Elem()
+			if elemType.Kind() == reflect.Ptr {
+				elemType = elemType.Elem()
+			}
+			if elemType.Kind() == reflect.Struct && !isBasicType(elemType) {
+				return true
+			}
 		}
 	}
 
@@ -30,12 +42,18 @@ func hasStructFields(dtoInterface interface{}) bool {
 
 func extractPreloadsFromDTO(dtoInterface interface{}) []string {
 	var preloads []string
+	seen := make(map[string]bool)
 
 	dtoType := reflect.TypeOf(dtoInterface)
 	if dtoType.Kind() == reflect.Ptr {
 		dtoType = dtoType.Elem()
 	}
 
+	extractPreloadsRecursive(dtoType, "", &preloads, seen)
+	return preloads
+}
+
+func extractPreloadsRecursive(dtoType reflect.Type, prefix string, preloads *[]string, seen map[string]bool) {
 	for i := 0; i < dtoType.NumField(); i++ {
 		field := dtoType.Field(i)
 
@@ -44,16 +62,55 @@ func extractPreloadsFromDTO(dtoInterface interface{}) []string {
 			fieldType = fieldType.Elem()
 		}
 
+		// Handle struct fields (including nested structs)
 		if fieldType.Kind() == reflect.Struct && !isBasicType(fieldType) {
 			preloadName := field.Tag.Get("preload")
 			if preloadName == "" {
 				preloadName = field.Name
 			}
-			preloads = append(preloads, preloadName)
+
+			fullPreloadName := preloadName
+			if prefix != "" {
+				fullPreloadName = prefix + "." + preloadName
+			}
+
+			if !seen[fullPreloadName] {
+				*preloads = append(*preloads, fullPreloadName)
+				seen[fullPreloadName] = true
+			}
+
+			// Recursively extract preloads from nested structs
+			extractPreloadsRecursive(fieldType, fullPreloadName, preloads, seen)
+		}
+
+		// Handle slice fields (for many-to-many or one-to-many relationships)
+		if fieldType.Kind() == reflect.Slice {
+			elemType := fieldType.Elem()
+			if elemType.Kind() == reflect.Ptr {
+				elemType = elemType.Elem()
+			}
+
+			if elemType.Kind() == reflect.Struct && !isBasicType(elemType) {
+				preloadName := field.Tag.Get("preload")
+				if preloadName == "" {
+					preloadName = field.Name
+				}
+
+				fullPreloadName := preloadName
+				if prefix != "" {
+					fullPreloadName = prefix + "." + preloadName
+				}
+
+				if !seen[fullPreloadName] {
+					*preloads = append(*preloads, fullPreloadName)
+					seen[fullPreloadName] = true
+				}
+
+				// Recursively extract preloads from slice element structs
+				extractPreloadsRecursive(elemType, fullPreloadName, preloads, seen)
+			}
 		}
 	}
-
-	return preloads
 }
 
 func isBasicType(t reflect.Type) bool {
@@ -63,6 +120,13 @@ func isBasicType(t reflect.Type) bool {
 		reflect.Float32, reflect.Float64, reflect.Bool:
 		return true
 	}
+
+	// Check for common types like time.Time
+	switch t.String() {
+	case "time.Time", "*time.Time":
+		return true
+	}
+
 	return false
 }
 
@@ -185,22 +249,38 @@ func mapEntityToDTO[T any](entity *T, dtoInterface interface{}) (interface{}, er
 }
 
 func mapFieldValue(entityFieldValue, dtoFieldValue reflect.Value, dtoField reflect.StructField) error {
+	// Handle direct type conversion
 	if entityFieldValue.Type().ConvertibleTo(dtoFieldValue.Type()) {
 		dtoFieldValue.Set(entityFieldValue.Convert(dtoFieldValue.Type()))
 		return nil
 	}
 
+	// Handle assignable types
+	if entityFieldValue.Type().AssignableTo(dtoFieldValue.Type()) {
+		dtoFieldValue.Set(entityFieldValue)
+		return nil
+	}
+
+	// Handle struct to struct mapping
 	if entityFieldValue.Kind() == reflect.Struct && dtoFieldValue.Kind() == reflect.Struct {
 		return mapStructToStruct(entityFieldValue, dtoFieldValue)
 	}
 
+	// Handle pointer to struct mapping to struct
 	if entityFieldValue.Kind() == reflect.Ptr && !entityFieldValue.IsNil() &&
 		dtoFieldValue.Kind() == reflect.Struct && entityFieldValue.Elem().Kind() == reflect.Struct {
 		return mapStructToStruct(entityFieldValue.Elem(), dtoFieldValue)
 	}
 
+	// Handle slice to slice mapping
 	if entityFieldValue.Kind() == reflect.Slice && dtoFieldValue.Kind() == reflect.Slice {
 		return mapSliceToSlice(entityFieldValue, dtoFieldValue)
+	}
+
+	// Handle nil pointer case
+	if entityFieldValue.Kind() == reflect.Ptr && entityFieldValue.IsNil() {
+		// Leave the destination field as zero value
+		return nil
 	}
 
 	return nil
@@ -245,11 +325,22 @@ func mapStructToStruct(sourceValue, destValue reflect.Value) error {
 
 func mapSliceToSlice(sourceValue, destValue reflect.Value) error {
 	if sourceValue.Len() == 0 {
+		// Set an empty slice instead of leaving it nil
+		emptySlice := reflect.MakeSlice(destValue.Type(), 0, 0)
+		destValue.Set(emptySlice)
 		return nil
 	}
 
 	destElemType := destValue.Type().Elem()
 	sourceElemType := sourceValue.Type().Elem()
+
+	// Handle pointer types
+	if destElemType.Kind() == reflect.Ptr {
+		destElemType = destElemType.Elem()
+	}
+	if sourceElemType.Kind() == reflect.Ptr {
+		sourceElemType = sourceElemType.Elem()
+	}
 
 	newSlice := reflect.MakeSlice(destValue.Type(), sourceValue.Len(), sourceValue.Len())
 
@@ -257,12 +348,27 @@ func mapSliceToSlice(sourceValue, destValue reflect.Value) error {
 		sourceElem := sourceValue.Index(i)
 		destElem := newSlice.Index(i)
 
+		// Handle pointer source elements
+		if sourceElem.Kind() == reflect.Ptr && !sourceElem.IsNil() {
+			sourceElem = sourceElem.Elem()
+		}
+
+		// Handle pointer destination elements
+		if destElem.Kind() == reflect.Ptr {
+			if destElem.IsNil() {
+				destElem.Set(reflect.New(destElem.Type().Elem()))
+			}
+			destElem = destElem.Elem()
+		}
+
 		if sourceElemType.Kind() == reflect.Struct && destElemType.Kind() == reflect.Struct {
 			if err := mapStructToStruct(sourceElem, destElem); err != nil {
 				return fmt.Errorf("error mapping slice element %d: %w", i, err)
 			}
 		} else if sourceElem.Type().ConvertibleTo(destElem.Type()) {
 			destElem.Set(sourceElem.Convert(destElem.Type()))
+		} else if sourceElem.Type().AssignableTo(destElem.Type()) {
+			destElem.Set(sourceElem)
 		}
 	}
 
